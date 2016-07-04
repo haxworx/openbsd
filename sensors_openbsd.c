@@ -54,6 +54,8 @@ int devn;
 #include <sys/ioctl.h>
 #include <sys/audioio.h>
 
+static bool audio_output_simple = false;
+
 typedef struct results_t results_t;
 struct results_t {
 	bool have_power;
@@ -116,7 +118,7 @@ static int openbsd_audio_state_master(results_t *results)
 		strlcpy(name, info[i].label.name, sizeof(name));
 		if (!strcmp("master", name)) {
 			results->volume_left = values[i].un.value.level[0];
-			results->volume_right = values[i].un.value.level[0];
+			results->volume_right = values[i].un.value.level[1];
 			results->have_mixer = true;
 			break;
 		}
@@ -241,6 +243,16 @@ static void openbsd_battery_state(results_t *results)
 	results->have_power = have_power;
 }
 
+static int get_percent(int value, int max)
+{
+	double avg = (max /100.0);
+	double tmp = value / avg;
+
+	int result = round(tmp); 
+ 
+	return result;
+}
+
 static void results_show(results_t results)
 {
 	if (results.have_power)
@@ -251,16 +263,24 @@ static void results_show(results_t results)
 	printf(" [TEMP]: %dC", results.temperature);
 
 	if (results.have_mixer) {
+		if (audio_output_simple) {
+			uint8_t high = results.volume_right > results.volume_left ?
+					results.volume_right : results.volume_left;
+			uint8_t perc = get_percent(high, 255);
+			printf(" [AUDIO]: %d%%", perc);
+		} else
 			printf(" [AUDIO] L: %d R: %d", results.volume_left,
 				results.volume_right);
 	}
 	printf("\n");
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	results_t results;
-	
+
+	audio_output_simple = true;
+		
 	memset(&results, 0, sizeof(results_t)); 
 	
 	openbsd_battery_state(&results);
