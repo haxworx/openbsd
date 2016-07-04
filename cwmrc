@@ -1,3 +1,7 @@
 borderwidth 1
 color activeborder black
 color inactiveborder darkred
+command term "xfce4-terminal"
+command gimp "gimp"
+command chromium "chrome"
+
