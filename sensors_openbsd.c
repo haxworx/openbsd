@@ -272,6 +272,7 @@ static void results_show(results_t results)
 			printf(" [AUDIO] L: %d R: %d", results.volume_left,
 				results.volume_right);
 	}
+
 	printf("\n");
 }
 
