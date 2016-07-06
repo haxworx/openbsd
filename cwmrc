@@ -1,7 +1,9 @@
 borderwidth 1
 color activeborder black
 color inactiveborder darkred
+snapdist 10
+moveamount 10
 command term "xfce4-terminal"
 command gimp "gimp"
-command chromium "chrome"
+command chromium "chrome --proxy-server=10.1.1.1:3128"
 
