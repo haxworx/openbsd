@@ -5,3 +5,4 @@ default:
 	cp tmux.conf $(HOME)/.tmux.conf
 	cp cwmrc $(HOME)/.cwmrc
 	cp xinitrc $(HOME)/.xinitrc
+	cp profile $(HOME)/.profile
