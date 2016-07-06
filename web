@@ -1,0 +1,4 @@
+#!/bin/sh
+
+chrome --proxy-server=$http_proxy
+exit 0;
