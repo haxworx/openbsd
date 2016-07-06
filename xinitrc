@@ -1,2 +1,2 @@
 xsetroot -solid gray
-exec cwm
+exec ratpoison
