@@ -7,3 +7,5 @@ command term "xfce4-terminal"
 command gimp "gimp"
 command chromium "chrome --proxy-server=10.1.1.1:3128"
 
+bind M-1 volctl +20
+bind M-2 volctl -20
