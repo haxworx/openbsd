@@ -6,4 +6,4 @@ default:
 	cp cwmrc $(HOME)/.cwmrc
 	cp profile $(HOME)/.profile
 	cp volctl t web $(HOME)/Applications/.bin
-	chmod +x $(HOME)/Applications/bin/*	
+	chmod +x $(HOME)/Applications/.bin/*	
