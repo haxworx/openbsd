@@ -128,7 +128,7 @@ openbsd_audio_state_master(results_t * results)
 	strlcpy(name, info[i].label.name, sizeof(name));
 	if (!strcmp("master", name)) {
 	    results->volume_left = values[i].un.value.level[0];
-	)   results->volume_right = values[i].un.value.level[1];
+	    results->volume_right = values[i].un.value.level[1];
 	    results->have_mixer = true;
 	    break;
 	}
