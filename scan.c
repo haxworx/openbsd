@@ -31,7 +31,7 @@ int end_port = 1024;
 const char *hostname = NULL;
 struct hostent *host;
 
-int timeout = 1;
+int timeout = 2;
 
 int
 Connect(const char *hostname, int port, int timeout)
