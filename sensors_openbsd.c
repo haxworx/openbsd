@@ -49,21 +49,18 @@ struct sensordev snsrdev;
 size_t sdlen = sizeof(struct sensordev);
 int devn;
 
-/* Storage for sensor values */
-static int mib[5] = {CTL_HW, HW_SENSORS, 0, 0, 0};
-static int *bat_mib[5] = { NULL };
-static int pwr_mib[5];
-static int temperature_mib[5];
-
-#define MAX_BATTERIES 5
 /* If there is > 1 battery just add the values */
-static int battery_index = 0;
-static double last_full_charge = 0;
-static double current_charge = 0;
+#define MAX_BATTERIES 5
+typedef struct mibs_t mibs_t;
+struct mibs_t {
+    int *bat_mib[5];
+    int pwr_mib[5];
+    int temperature_mib[5];
+};
 
-/* Structure to store output for printing to stdout */
 typedef struct results_t results_t;
 struct results_t {
+    mibs_t          mibs;
     bool 	    have_power;
     uint8_t 	    battery_percent;
     bool 	    is_centigrade;
@@ -71,6 +68,9 @@ struct results_t {
     bool 	    have_mixer;
     uint8_t 	    volume_left;
     uint8_t 	    volume_right;
+    int             battery_index;
+    double          last_full_charge;
+    double          current_charge;
 };
 
 static int 
@@ -147,12 +147,13 @@ openbsd_audio_state_master(results_t * results)
 static void 
 openbsd_temperature_state(results_t * results)
 {
-    memcpy(&temperature_mib, mib, sizeof(int) * 5);
+    int mib[5] = {CTL_HW, HW_SENSORS, 0, 0, 0};
+    memcpy(&results->mibs.temperature_mib, mib, sizeof(int) * 5);
 
     for (devn = 0;; devn++) {
-	temperature_mib[2] = devn;
+	results->mibs.temperature_mib[2] = devn;
 
-	if (sysctl(temperature_mib, 3, &snsrdev, &sdlen, NULL, 0) == -1) {
+	if (sysctl(results->mibs.temperature_mib, 3, &snsrdev, &sdlen, NULL, 0) == -1) {
 	    if (errno == ENOENT)
 		break;
 	    else
@@ -170,9 +171,9 @@ openbsd_temperature_state(results_t * results)
     int numt;
 
     for (numt = 0; numt < snsrdev.maxnumt[SENSOR_TEMP]; numt++) {
-	temperature_mib[4] = numt;
+	results->mibs.temperature_mib[4] = numt;
 
-	if (sysctl(temperature_mib, 5, &snsr, &slen, NULL, 0) == -1)
+	if (sysctl(results->mibs.temperature_mib, 5, &snsr, &slen, NULL, 0) == -1)
 	    continue;
 
 	if (slen > 0 && (snsr.flags & SENSOR_FINVALID) == 0)
@@ -181,7 +182,7 @@ openbsd_temperature_state(results_t * results)
 
     int temp = 0;
 
-    if (sysctl(temperature_mib, 5, &snsr, &slen, NULL, 0) != -1) {
+    if (sysctl(results->mibs.temperature_mib, 5, &snsr, &slen, NULL, 0) != -1) {
 	temp = (snsr.value - 273150000) / 1000000.0;
     }
     results->temperature = temp;
@@ -191,10 +192,11 @@ openbsd_temperature_state(results_t * results)
 
 
 static int 
-openbsd_mibs_power_get(void)
+openbsd_mibs_power_get(results_t * results)
 {
     int i;
     int result = 0;    
+    int mib[5] = {CTL_HW, HW_SENSORS, 0, 0, 0};
 
     for (devn = 0;; devn++) {
 	mib[2] = devn;
@@ -209,8 +211,8 @@ openbsd_mibs_power_get(void)
             char buf[64];
             snprintf(buf, sizeof(buf), "acpibat%d", i);
        	    if (!strcmp(buf, snsrdev.xname)) {
-                bat_mib[battery_index] = malloc(sizeof(int) * 5);
-       	        int *tmp = bat_mib[battery_index++];
+                results->mibs.bat_mib[results->battery_index] = malloc(sizeof(int) * 5);
+       	        int *tmp = results->mibs.bat_mib[results->battery_index++];
         	tmp[0] = mib[0];
         	tmp[1] = mib[1];
         	tmp[2] = mib[2];
@@ -219,9 +221,9 @@ openbsd_mibs_power_get(void)
         }
 
 	if (!strcmp("acpiac0", snsrdev.xname)) {
-	    pwr_mib[0] = mib[0];
-	    pwr_mib[1] = mib[1];
-	    pwr_mib[2] = mib[2];
+	    results->mibs.pwr_mib[0] = mib[0];
+	    results->mibs.pwr_mib[1] = mib[1];
+	    results->mibs.pwr_mib[2] = mib[2];
 	}
     }
  
@@ -232,17 +234,20 @@ openbsd_mibs_power_get(void)
 static void
 openbsd_battery_state_get(int *mib, results_t * results)
 {
+    double last_full_charge = 0;
+    double current_charge = 0;
+
     mib[3] = 7;
     mib[4] = 0;
 
     if (sysctl(mib, 5, &snsr, &slen, NULL, 0) != -1)
-	last_full_charge += (double) snsr.value;
+	last_full_charge = (double) snsr.value;
 
     mib[3] = 7;
     mib[4] = 3;
 
     if (sysctl(mib, 5, &snsr, &slen, NULL, 0) != -1)
-	current_charge += (double) snsr.value;
+	current_charge = (double) snsr.value;
 
     /* There is a bug in the OS so try again... */
     if (current_charge == 0 || last_full_charge == 0) {
@@ -250,14 +255,17 @@ openbsd_battery_state_get(int *mib, results_t * results)
 	mib[4] = 0;
 
 	if (sysctl(mib, 5, &snsr, &slen, NULL, 0) != -1)
-	    last_full_charge += (double) snsr.value;
+	    last_full_charge = (double) snsr.value;
 
 	mib[3] = 8;
 	mib[4] = 3;
 
 	if (sysctl(mib, 5, &snsr, &slen, NULL, 0) != -1)
-	    current_charge += (double) snsr.value;
+	    current_charge = (double) snsr.value;
     }
+
+     results->last_full_charge += last_full_charge;
+     results->current_charge += current_charge;
 }
 
 static void openbsd_power_state(results_t *results)
@@ -265,21 +273,21 @@ static void openbsd_power_state(results_t *results)
     int i;
     int have_power = 0;
 
-    pwr_mib[3] = 9;
-    pwr_mib[4] = 0;
+    results->mibs.pwr_mib[3] = 9;
+    results->mibs.pwr_mib[4] = 0;
 
-    if (sysctl(pwr_mib, 5, &snsr, &slen, NULL, 0) != -1)
+    if (sysctl(results->mibs.pwr_mib, 5, &snsr, &slen, NULL, 0) != -1)
 	have_power = (int) snsr.value;
 
     // get batteries here
-    for (i = 0; i < battery_index; i++) {
-        openbsd_battery_state_get(bat_mib[i], results);
+    for (i = 0; i < results->battery_index; i++) {
+        openbsd_battery_state_get(results->mibs.bat_mib[i], results);
     }
 
-    for (i = 0; i < battery_index; i++)
-        free(bat_mib[i]);
+    for (i = 0; i < results->battery_index; i++)
+        free(results->mibs.bat_mib[i]);
 
-    double percent = 100 * (current_charge / last_full_charge);
+    double percent = 100 * (results->current_charge / results->last_full_charge);
 
     results->battery_percent = (int) percent;
     results->have_power = have_power;
@@ -326,7 +334,7 @@ main(int argc, char **argv)
 
     memset(&results, 0, sizeof(results_t));
 
-    bool have_battery = openbsd_mibs_power_get();
+    bool have_battery = openbsd_mibs_power_get(&results);
    
     if (have_battery) {
         openbsd_power_state(&results);
