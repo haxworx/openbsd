@@ -1,4 +1,7 @@
 #define _DEFAULT_SOURCE 1
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +16,8 @@
 #include <time.h>
 
 #define h_addr h_addr_list[0]
+
+bool connection_ssl = false;
 
 void fail(char *msg)
 {
@@ -30,26 +35,33 @@ host_from_url(const char *host)
     if (str) {
         addr += strlen("http://");
         end = strchr(addr, '/');
-        *end = '\0';
+        if (end) {
+            *end = '\0';
+        }
         return strdup(addr);
     }
 
     str = strstr(addr, "https://");
     if (str) {
         addr += strlen("https://");
+        // XXX hack!
+        connection_ssl = true;
         end = strchr(addr, '/');
-        *end = '\0';
+        if (end) {
+            *end = '\0';
+        }
         return strdup(addr);
     }
 
-    return (NULL);
+
+    return strdup(addr);
 }
+
 
 char *
 path_from_url(const char *path)
 {
     if (path == NULL) return (NULL);
-
     char *addr = strdup(path);
     char *p = addr;
 
@@ -63,6 +75,8 @@ path_from_url(const char *path)
         char *p = strchr(str, '/');
         if (p) {
             return strdup(p);
+        } else {
+            return strdup("/");
         }
     }
 
@@ -72,10 +86,49 @@ path_from_url(const char *path)
         char *p = strchr(str, '/');
         if (p) {
             return strdup(p);
+        } else {
+            return strdup("/");
         }
     }
 
     return (p);
+}
+
+
+BIO *
+Connect_Ssl(const char *hostname, int port)
+{
+    SSL_load_error_strings();
+    ERR_load_BIO_strings();
+    OpenSSL_add_all_algorithms();
+
+    BIO *bio;
+    char bio_addr[8192];
+
+    snprintf(bio_addr, sizeof(bio_addr), "%s:%d", hostname, port);
+
+    SSL_library_init();
+
+    SSL_CTX *ctx = SSL_CTX_new(SSLv23_client_method());
+    SSL *ssl = NULL;
+
+    SSL_CTX_load_verify_locations(ctx, "/etc/ssl/certs", NULL);
+
+    bio = BIO_new_ssl_connect(ctx);
+    if (!bio) {
+        fail("BIO_new_ssl_connect");
+    }
+
+    BIO_get_ssl(bio, &ssl);
+    SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+    BIO_set_conn_hostname(bio, bio_addr);
+
+    if (BIO_do_connect(bio) <= 0) {
+        fail("BIO_do_connect");
+    }
+
+    return (bio);
+
 }
 
 
@@ -118,6 +171,7 @@ struct _header_t {
 typedef struct _url_t url_t;
 struct _url_t {
     int sock;
+    BIO *bio;
     char *host;
     char *path;
     int status;
@@ -126,13 +180,34 @@ struct _url_t {
     void *data;
 };
 
+ssize_t 
+Write(url_t *conn, char *bytes, size_t len)
+{
+    if (connection_ssl) {
+        return BIO_write(conn->bio, bytes, len);
+    }
+
+    return write(conn->sock, bytes, len);
+}
+
+
+ssize_t
+Read(url_t *conn, char *buf, size_t len)
+{
+    if (connection_ssl) {
+        return BIO_read(conn->bio, buf, len);
+    } 
+
+    return read(conn->sock, buf, len);
+}
+
 
 char *
 header_value(url_t *request, const char *name)
 {
     int i;
 
-    for (i = 0; i < MAX_HEADERS; i++) {
+    for (i = 0; request->headers[i]; i++) {
         header_t *tmp = request->headers[i];
         if (!tmp) return NULL;
         if (!strcmp(tmp->name, name)) {
@@ -142,37 +217,37 @@ header_value(url_t *request, const char *name)
     return NULL;
 }
 
+
 void
 http_content_get(url_t *conn)
 {
     char buf[1024];
-    int length;
+    int length = 0;
+    int bytes;
+
     char *have_length = header_value(conn, "Content-Length");
     if (have_length) {
         length = atoi(have_length);
         conn->len = length;
     }
+
     if (!length) return;
+
     int total = 0;
-    if (!length) return;
 
     /* start the read by reading one byte */
-    read(conn->sock, buf, 1);
-
-    char *data = calloc(1, conn->len); 
-
-    do {
-        int bytes = read(conn->sock, buf, sizeof(buf));
-        char *pos = &data[total];
-        memcpy(pos, buf, bytes);
-        total += bytes; 
-            
-    } while (total < length);
+    Read(conn, buf, 1);
 
     conn->data = calloc(1, length);
-    memcpy(conn->data, data, length);
-    free(data);
+
+    do {
+        bytes = Read(conn, buf, sizeof(buf));
+        unsigned char *pos = (unsigned char *) conn->data + total;
+        memcpy(pos, buf, bytes);
+        total += bytes; 
+    } while (total < length);
 }
+
 
 int
 http_headers_get(url_t *conn)
@@ -192,7 +267,7 @@ http_headers_get(url_t *conn)
     while (1) {
         len = 0;
         while (buf[len - 1] != '\r' && buf[len] != '\n') {
-            bytes = read(conn->sock, &buf[len], 1);
+            bytes = Read(conn, &buf[len], 1);
             len += bytes;
         }
 
@@ -236,14 +311,19 @@ url_get(const char *url)
 
     request->host = host_from_url(url);
     request->path = path_from_url(url);
- 
-    request->sock = Connect(request->host, 80);
-    if (request->sock) {
+
+    if (connection_ssl) {
+        request->bio  = Connect_Ssl(request->host, 443);
+    } else 
+        request->sock = Connect(request->host, 80);
+
+    if (request->bio || request->sock) {
         char query[4096];
 
         snprintf(query, sizeof(query), "GET /%s HTTP/1.1\r\n"
     	    "Host: %s\r\n\r\n", request->path, request->host);
-        write(request->sock, query, strlen(query));
+       
+        Write(request, query, strlen(query)); 
 
         http_headers_get(request);
         int i;
@@ -260,10 +340,15 @@ url_get(const char *url)
     return NULL;
 }
 
+
 void
 url_finish(url_t *url)
 {
-    close(url->sock);
+    if (connection_ssl) {
+        BIO_free_all(url->bio); 
+    } else if (url->sock >= 0) {
+        close(url->sock); 
+    }
     if (url->host) free(url->host);
     if (url->path) free(url->path);
     int i;
@@ -279,10 +364,11 @@ url_finish(url_t *url)
     free(url->data);
 }
 
+
 void 
 usage(void)
 {
-    printf("./a.out <url>\n");
+    printf("./a.out <url> <file>\n");
     exit(EXIT_FAILURE);
 }
 
@@ -290,14 +376,14 @@ usage(void)
 int
 main(int argc, char **argv)
 {
-    if (argc != 2) usage();
+    int i;
+    
+    if (argc != 3) usage();
 
     url_t *req = url_get(argv[1]);
     if (req->status != 200) {
         fail("status is not 200!");
     }
-
-    int i;
 
     printf("status is %d\n", req->status);
 
@@ -306,7 +392,15 @@ main(int argc, char **argv)
         printf("%s -> %s\n", tmp->name, tmp->value);
     }
 
-    int fd = open("test.edj", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    char *type = header_value(req, "Content-Type");
+
+    printf("Type: %s\n", type);
+   
+    int fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        fail("open()");
+    }
+
     write(fd, req->data, req->len);
     close(fd);
 
@@ -314,4 +408,5 @@ main(int argc, char **argv)
 
     return (EXIT_SUCCESS);
 }
+
 
