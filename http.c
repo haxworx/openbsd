@@ -171,6 +171,7 @@ http_content_get(url_t *conn)
 
     conn->data = calloc(1, length);
     memcpy(conn->data, data, length);
+    free(data);
 }
 
 int
