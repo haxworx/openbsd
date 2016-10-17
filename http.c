@@ -156,16 +156,17 @@ http_content_get(url_t *conn)
     int total = 0;
     if (!length) return;
 
-    int count = 1;
-    char *data = calloc(1, sizeof(buf)); 
+    /* start the read by reading one byte */
+    read(conn->sock, buf, 1);
+
+    char *data = calloc(1, conn->len); 
 
     do {
         int bytes = read(conn->sock, buf, sizeof(buf));
-        strncat(data, buf, bytes);
-// XXX broken
+        char *pos = &data[total];
+        memcpy(pos, buf, bytes);
         total += bytes; 
-        count++;
-        data = realloc(data, sizeof(buf) * count);
+            
     } while (total < length);
 
     conn->data = calloc(1, length);
@@ -274,6 +275,7 @@ url_finish(url_t *url)
         free(tmp->value);
         free(tmp);
     } 
+    free(url->data);
 }
 
 void 
@@ -304,7 +306,6 @@ main(int argc, char **argv)
     }
 
     int fd = open("test.edj", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    unsigned char *data = req->data;
     write(fd, req->data, req->len);
     close(fd);
 
