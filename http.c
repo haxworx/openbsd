@@ -121,6 +121,7 @@ struct _url_t {
     char *host;
     char *path;
     int status;
+    int len;
     header_t *headers[MAX_HEADERS];
     void *data;
 };
@@ -149,6 +150,7 @@ http_content_get(url_t *conn)
     char *have_length = header_value(conn, "Content-Length");
     if (have_length) {
         length = atoi(have_length);
+        conn->len = length;
     }
     if (!length) return;
     int total = 0;
@@ -160,6 +162,7 @@ http_content_get(url_t *conn)
     do {
         int bytes = read(conn->sock, buf, sizeof(buf));
         strncat(data, buf, bytes);
+// XXX broken
         total += bytes; 
         count++;
         data = realloc(data, sizeof(buf) * count);
@@ -300,8 +303,10 @@ main(int argc, char **argv)
         printf("%s -> %s\n", tmp->name, tmp->value);
     }
 
+    int fd = open("test.edj", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     unsigned char *data = req->data;
-    printf("data: %s\n", data);
+    write(fd, req->data, req->len);
+    close(fd);
 
     url_finish(req);
 
