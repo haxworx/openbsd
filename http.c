@@ -17,8 +17,6 @@
 
 #define h_addr h_addr_list[0]
 
-bool connection_ssl = false;
-
 void fail(char *msg)
 {
     fprintf(stderr, "Error: %s\n", msg);
@@ -44,8 +42,6 @@ host_from_url(const char *host)
     str = strstr(addr, "https://");
     if (str) {
         addr += strlen("https://");
-        // XXX hack!
-        connection_ssl = true;
         end = strchr(addr, '/');
         if (end) {
             *end = '\0';
@@ -176,6 +172,7 @@ struct _url_t {
     char *path;
     int status;
     int len;
+    bool connection_ssl;
     header_t *headers[MAX_HEADERS];
     void *data;
 };
@@ -183,7 +180,7 @@ struct _url_t {
 ssize_t 
 Write(url_t *conn, char *bytes, size_t len)
 {
-    if (connection_ssl) {
+    if (conn->connection_ssl) {
         return BIO_write(conn->bio, bytes, len);
     }
 
@@ -194,7 +191,7 @@ Write(url_t *conn, char *bytes, size_t len)
 ssize_t
 Read(url_t *conn, char *buf, size_t len)
 {
-    if (connection_ssl) {
+    if (conn->connection_ssl) {
         return BIO_read(conn->bio, buf, len);
     } 
 
@@ -308,11 +305,15 @@ url_t *
 url_get(const char *url)
 {
     url_t *request = calloc(1, sizeof(url_t));
-
+ 
+    if (!strncmp(url, "https://", 8)) {
+        request->connection_ssl = true;
+    } 
+ 
     request->host = host_from_url(url);
     request->path = path_from_url(url);
 
-    if (connection_ssl) {
+    if (request->connection_ssl) {
         request->bio  = Connect_Ssl(request->host, 443);
     } else 
         request->sock = Connect(request->host, 80);
@@ -326,11 +327,6 @@ url_get(const char *url)
         Write(request, query, strlen(query)); 
 
         http_headers_get(request);
-        int i;
-
-        for (i = 0; request->headers[i] != NULL; i++) {
-            printf("name is %s\n", request->headers[i]->name);
-        }
 
         http_content_get(request);
      
@@ -344,7 +340,7 @@ url_get(const char *url)
 void
 url_finish(url_t *url)
 {
-    if (connection_ssl) {
+    if (url->connection_ssl) {
         BIO_free_all(url->bio); 
     } else if (url->sock >= 0) {
         close(url->sock); 
