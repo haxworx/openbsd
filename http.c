@@ -164,8 +164,8 @@ struct _header_t {
     char *value;
 };
 
-typedef struct _url_t url_t;
-struct _url_t {
+typedef struct _request_t request_t;
+struct _request_t {
     int sock;
     BIO *bio;
     char *host;
@@ -178,29 +178,29 @@ struct _url_t {
 };
 
 ssize_t 
-Write(url_t *conn, char *bytes, size_t len)
+Write(request_t *request, char *bytes, size_t len)
 {
-    if (conn->connection_ssl) {
-        return BIO_write(conn->bio, bytes, len);
+    if (request->connection_ssl) {
+        return BIO_write(request->bio, bytes, len);
     }
 
-    return write(conn->sock, bytes, len);
+    return write(request->sock, bytes, len);
 }
 
 
 ssize_t
-Read(url_t *conn, char *buf, size_t len)
+Read(request_t *request, char *buf, size_t len)
 {
-    if (conn->connection_ssl) {
-        return BIO_read(conn->bio, buf, len);
+    if (request->connection_ssl) {
+        return BIO_read(request->bio, buf, len);
     } 
 
-    return read(conn->sock, buf, len);
+    return read(request->sock, buf, len);
 }
 
 
 char *
-header_value(url_t *request, const char *name)
+header_value(request_t *request, const char *name)
 {
     int i;
 
@@ -216,16 +216,16 @@ header_value(url_t *request, const char *name)
 
 
 void
-http_content_get(url_t *conn)
+http_content_get(request_t *request)
 {
     char buf[1024];
     int length = 0;
     int bytes;
 
-    char *have_length = header_value(conn, "Content-Length");
+    char *have_length = header_value(request, "Content-Length");
     if (have_length) {
         length = atoi(have_length);
-        conn->len = length;
+        request->len = length;
     }
 
     if (!length) return;
@@ -233,13 +233,13 @@ http_content_get(url_t *conn)
     int total = 0;
 
     /* start the read by reading one byte */
-    Read(conn, buf, 1);
+    Read(request, buf, 1);
 
-    conn->data = calloc(1, length);
+    request->data = calloc(1, length);
 
     do {
-        bytes = Read(conn, buf, sizeof(buf));
-        unsigned char *pos = (unsigned char *) conn->data + total;
+        bytes = Read(request, buf, sizeof(buf));
+        unsigned char *pos = (unsigned char *) request->data + total;
         memcpy(pos, buf, bytes);
         total += bytes; 
     } while (total < length);
@@ -247,12 +247,12 @@ http_content_get(url_t *conn)
 
 
 int
-http_headers_get(url_t *conn)
+http_headers_get(request_t *request)
 {
     int i;
 
     for (i = 0; i < MAX_HEADERS; i++) {
-        conn->headers[i] = NULL;
+        request->headers[i] = NULL;
     }
 
     int bytes = 0;
@@ -264,7 +264,7 @@ http_headers_get(url_t *conn)
     while (1) {
         len = 0;
         while (buf[len - 1] != '\r' && buf[len] != '\n') {
-            bytes = Read(conn, &buf[len], 1);
+            bytes = Read(request, &buf[len], 1);
             len += bytes;
         }
 
@@ -272,16 +272,16 @@ http_headers_get(url_t *conn)
 
         if (strlen(buf) == 2) return (1);
 
-        int count = sscanf(buf, "\nHTTP/1.1 %d", &conn->status);
+        int count = sscanf(buf, "\nHTTP/1.1 %d", &request->status);
         if (count) continue;
-        conn->headers[idx] = calloc(1, sizeof(header_t));
+        request->headers[idx] = calloc(1, sizeof(header_t));
         char *start = strchr(buf, '\n');
         if (start) {
             start++; 
         }
         char *end = strchr(start, ':');
         *end = '\0';
-        conn->headers[idx]->name = strdup(start);
+        request->headers[idx]->name = strdup(start);
 
         start = end + 1;
         while (start[0] == ' ') {
@@ -290,7 +290,7 @@ http_headers_get(url_t *conn)
 
         end = strchr(start, '\r'); 
         *end = '\0'; 
-        conn->headers[idx]->value = strdup(start);
+        request->headers[idx]->value = strdup(start);
 
         ++idx;
 
@@ -301,10 +301,10 @@ http_headers_get(url_t *conn)
 }
 
 
-url_t *
+request_t *
 url_get(const char *url)
 {
-    url_t *request = calloc(1, sizeof(url_t));
+    request_t *request = calloc(1, sizeof(request_t));
  
     if (!strncmp(url, "https://", 8)) {
         request->connection_ssl = true;
@@ -338,18 +338,18 @@ url_get(const char *url)
 
 
 void
-url_finish(url_t *url)
+url_finish(request_t *request)
 {
-    if (url->connection_ssl) {
-        BIO_free_all(url->bio); 
-    } else if (url->sock >= 0) {
-        close(url->sock); 
+    if (request->connection_ssl) {
+        BIO_free_all(request->bio); 
+    } else if (request->sock >= 0) {
+        close(request->sock); 
     }
-    if (url->host) free(url->host);
-    if (url->path) free(url->path);
+    if (request->host) free(request->host);
+    if (request->path) free(request->path);
     int i;
     for (i = 0; i < MAX_HEADERS; i++) {
-        header_t *tmp = url->headers[i];
+        header_t *tmp = request->headers[i];
         if (!tmp) { 
             break;
         }
@@ -357,7 +357,7 @@ url_finish(url_t *url)
         free(tmp->value);
         free(tmp);
     } 
-    free(url->data);
+    free(request->data);
 }
 
 
@@ -376,7 +376,7 @@ main(int argc, char **argv)
     
     if (argc != 3) usage();
 
-    url_t *req = url_get(argv[1]);
+    request_t *req = url_get(argv[1]);
     if (req->status != 200) {
         fail("status is not 200!");
     }
