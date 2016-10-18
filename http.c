@@ -182,7 +182,9 @@ struct _request_t {
     char *path;
     int status;
     int len;
+    int fd;
     bool connection_ssl;
+    bool print_percent;
     char *user_agent;
     header_t *headers[MAX_HEADERS];
     void *data;
@@ -213,7 +215,7 @@ Read(request_t *request, char *buf, size_t len)
 
 
 char *
-header_value(request_t *request, const char *name)
+url_header_get(request_t *request, const char *name)
 {
     int i;
 
@@ -229,13 +231,13 @@ header_value(request_t *request, const char *name)
 
 
 void
-http_content_get(request_t *request)
+_http_content_get(request_t *request)
 {
     char buf[1024];
     int length = 0;
     int bytes;
 
-    char *have_length = header_value(request, "Content-Length");
+    char *have_length = url_header_get(request, "Content-Length");
     if (have_length) {
         length = atoi(have_length);
         request->len = length;
@@ -248,23 +250,36 @@ http_content_get(request_t *request)
     /* start the read by reading one byte */
     Read(request, buf, 1);
 
-
-    if (!request->callback_data) {
+    if (!request->callback_data && request->fd == -1) {
         request->data = calloc(1, length);
     }
+
+    int ratio = length / 100;
 
     do {
         bytes = Read(request, buf, sizeof(buf));
         unsigned char *pos = (unsigned char *) request->data + total;
+ 
+
         if (request->callback_data) {
             data_cb_t received;
             received.data = pos;
             received.size = bytes;
             request->callback_data(&received);
         } else {
-            memcpy(pos, buf, bytes);
+            if (request->fd >= 0) {
+                write(request->fd, buf, bytes);
+            } else 
+                memcpy(pos, buf, bytes);
         }
+
         total += bytes; 
+
+	if (request->print_percent) {
+            int percent = (total / ratio);
+	    printf("%d\r", percent);
+        }
+
     } while (total < length);
 
     if (request->callback_done) {
@@ -274,7 +289,7 @@ http_content_get(request_t *request)
 
 
 int
-http_headers_get(request_t *request)
+_http_headers_get(request_t *request)
 {
     int i;
 
@@ -297,7 +312,7 @@ http_headers_get(request_t *request)
 
         buf[len] = '\0';
 
-        if (strlen(buf) == 2) return (1);
+        if (strlen(buf) == 1) return (1);
 
         int count = sscanf(buf, "\nHTTP/1.1 %d", &request->status);
         if (count) continue;
@@ -328,7 +343,7 @@ http_headers_get(request_t *request)
 }
 
 void
-url_set_user_agent(request_t *request, const char *string)
+url_user_agent_set(request_t *request, const char *string)
 {
     if (request->user_agent) free(request->user_agent);
     request->user_agent = strdup(string);
@@ -338,6 +353,8 @@ request_t *
 url_new(const char *url)
 {
     request_t *request = calloc(1, sizeof(request_t));
+
+    request->fd = -1;
 
     if (!request->user_agent) {
         request->user_agent = strdup
@@ -371,9 +388,9 @@ url_get(request_t *request)
        
         Write(request, query, strlen(query)); 
 
-        http_headers_get(request);
+        _http_headers_get(request);
 
-        http_content_get(request);
+        _http_content_get(request);
      
         return request->status;
     }
@@ -390,6 +407,11 @@ url_finish(request_t *request)
     } else if (request->sock >= 0) {
         close(request->sock); 
     }
+
+    if (request->fd >= 0) {
+        close(request->fd);
+    }
+
     if (request->host) free(request->host);
     if (request->path) free(request->path);
     int i;
@@ -406,6 +428,14 @@ url_finish(request_t *request)
     free(request->data);
 }
 
+int
+url_fd_write_set(request_t *request, int fd)
+{
+    if (fd >= 0) {
+        request->fd = fd;
+    }
+}
+
 void
 url_callback_set(request_t *request, int type, callback func)
 {
@@ -415,7 +445,7 @@ url_callback_set(request_t *request, int type, callback func)
 void 
 usage(void)
 {
-    printf("./a.out <url> <file>\n");
+    printf("./ayup <url> <file> <SHOW PERCENT>\n");
     exit(EXIT_FAILURE);
 }
 
@@ -434,43 +464,34 @@ data_received_cb(void *data)
     printf("size is %d!\n", received->size);
 }
 
+
+/* If no callback set for data and url_fd_write_set_set not used
+   a static buffer will be allocated to data and size set
+   accordingly.
+*/
+
 int
 main(int argc, char **argv)
 {
-    int i;
-    
-    if (argc != 3) usage();
+    if (argc != 4) usage();
 
     request_t *req = url_new(argv[1]);
-
-    url_set_user_agent(req, "Mozilla 7.0");
-
-/*  this callback works but not with the below example 
-
-    req->callback_done = data_done_cb;    
-    req->callback_data = data_received_cb;
-
-*/
-
-    int status = url_get(req);
-    if (status != 200) {
-        fail("status is not 200!");
-    }
-
-    printf("status is %d\n", req->status);
-
-    for (i = 0; req->headers[i]; i++) {
-        header_t *tmp = req->headers[i];
-        printf("%s -> %s\n", tmp->name, tmp->value);
-    }
 
     int fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
         fail("open()");
     }
+   
+    if (atoi(argv[3]) > 0) {
+        req->print_percent = true;
+    }
+ 
+    url_fd_write_set(req, fd);
 
-    write(fd, req->data, req->len);
-    close(fd);
+    int status = url_get(req);
+    if (status != 200) {
+        fail("status is not 200!");
+    }
 
     url_finish(req);
 
