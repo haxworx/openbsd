@@ -158,6 +158,14 @@ Connect(const char *hostname, int port)
     return (0);
 }
 
+typedef struct _data_cb_t data_cb_t;
+struct _data_cb_t {
+    void *data;
+    int size;
+};
+
+typedef int (*callback)(void *data);
+ 
 #define MAX_HEADERS 128
 
 typedef struct _header_t header_t;
@@ -178,6 +186,7 @@ struct _request_t {
     char *user_agent;
     header_t *headers[MAX_HEADERS];
     void *data;
+    callback callback_data;
 };
 
 ssize_t 
@@ -238,12 +247,22 @@ http_content_get(request_t *request)
     /* start the read by reading one byte */
     Read(request, buf, 1);
 
-    request->data = calloc(1, length);
+
+    if (!request->callback_data) {
+        request->data = calloc(1, length);
+    }
 
     do {
         bytes = Read(request, buf, sizeof(buf));
         unsigned char *pos = (unsigned char *) request->data + total;
-        memcpy(pos, buf, bytes);
+        if (request->callback_data) {
+            data_cb_t received;
+            received.data = pos;
+            received.size = bytes;
+            request->callback_data(&received);
+        } else {
+            memcpy(pos, buf, bytes);
+        }
         total += bytes; 
     } while (total < length);
 }
@@ -304,21 +323,21 @@ http_headers_get(request_t *request)
 }
 
 void
-url_set_user_agent(const char *string)
+url_set_user_agent(request_t *request, const char *string)
 {
-    user_agent_override = strdup(string);
+    if (request->user_agent) free(request->user_agent);
+    request->user_agent = strdup(string);
 }
 
 request_t *
-url_get(const char *url)
+url_new(const char *url)
 {
     request_t *request = calloc(1, sizeof(request_t));
 
-    if (!user_agent_override) {
+    if (!request->user_agent) {
         request->user_agent = strdup
 	("Mozilla/5.0 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.133 Mobile Safari/535.19");
-    } else 
-	request->user_agent = user_agent_override;
+    } 
 
     if (!strncmp(url, "https://", 8)) {
         request->connection_ssl = true;
@@ -327,6 +346,12 @@ url_get(const char *url)
     request->host = host_from_url(url);
     request->path = path_from_url(url);
 
+    return request;
+}
+
+static int
+url_get(request_t *request)
+{
     if (request->connection_ssl) {
         request->bio  = Connect_Ssl(request->host, 443);
     } else 
@@ -345,10 +370,10 @@ url_get(const char *url)
 
         http_content_get(request);
      
-        return request;
+        return request->status;
     }
 
-    return NULL;
+    return 0;
 }
 
 
@@ -376,6 +401,11 @@ url_finish(request_t *request)
     free(request->data);
 }
 
+void
+url_callback_set(request_t *request, int type, callback func)
+{
+    request->callback_data = func; 
+}
 
 void 
 usage(void)
@@ -384,6 +414,13 @@ usage(void)
     exit(EXIT_FAILURE);
 }
 
+int 
+data_received_cb(void *data)
+{
+    data_cb_t *received = data;
+    if (!received) return 0;
+    printf("size is %d!\n", received->size);
+}
 
 int
 main(int argc, char **argv)
@@ -392,10 +429,17 @@ main(int argc, char **argv)
     
     if (argc != 3) usage();
 
-//    url_set_user_agent("Mozilla 5.0/");
+    request_t *req = url_new(argv[1]);
 
-    request_t *req = url_get(argv[1]);
-    if (req->status != 200) {
+    url_set_user_agent(req, "Mozilla 7.0");
+
+/*  this callback works but not with the below example 
+    
+    req->callback_data = data_received_cb;
+*/
+
+    int status = url_get(req);
+    if (status != 200) {
         fail("status is not 200!");
     }
 
