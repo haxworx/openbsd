@@ -187,6 +187,7 @@ struct _request_t {
     header_t *headers[MAX_HEADERS];
     void *data;
     callback callback_data;
+    callback callback_done;
 };
 
 ssize_t 
@@ -265,6 +266,10 @@ http_content_get(request_t *request)
         }
         total += bytes; 
     } while (total < length);
+
+    if (request->callback_done) {
+        request->callback_done(NULL);
+    }
 }
 
 
@@ -414,6 +419,13 @@ usage(void)
     exit(EXIT_FAILURE);
 }
 
+int
+data_done_cb(void *data)
+{
+    int *fd = data;
+    close(*fd);
+}
+
 int 
 data_received_cb(void *data)
 {
@@ -434,8 +446,10 @@ main(int argc, char **argv)
     url_set_user_agent(req, "Mozilla 7.0");
 
 /*  this callback works but not with the below example 
-    
+
+    req->callback_done = data_done_cb;    
     req->callback_data = data_received_cb;
+
 */
 
     int status = url_get(req);
