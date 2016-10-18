@@ -318,7 +318,7 @@ url_get(const char *url)
         request->user_agent = strdup
 	("Mozilla/5.0 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.133 Mobile Safari/535.19");
     } else 
-	request->user_agent = strdup(user_agent_override);
+	request->user_agent = user_agent_override;
 
     if (!strncmp(url, "https://", 8)) {
         request->connection_ssl = true;
