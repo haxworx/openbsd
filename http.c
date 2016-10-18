@@ -23,6 +23,8 @@ void fail(char *msg)
     exit(EXIT_FAILURE);
 }
 
+const char *user_agent_override = NULL;
+
 char *
 host_from_url(const char *host)
 {
@@ -173,6 +175,7 @@ struct _request_t {
     int status;
     int len;
     bool connection_ssl;
+    char *user_agent;
     header_t *headers[MAX_HEADERS];
     void *data;
 };
@@ -300,12 +303,23 @@ http_headers_get(request_t *request)
     return (0);
 }
 
+void
+url_set_user_agent(const char *string)
+{
+    user_agent_override = strdup(string);
+}
 
 request_t *
 url_get(const char *url)
 {
     request_t *request = calloc(1, sizeof(request_t));
- 
+
+    if (!user_agent_override) {
+        request->user_agent = strdup
+	("Mozilla/5.0 (Linux; Android 4.0.4; Galaxy Nexus Build/IMM76B) AppleWebKit/535.19 (KHTML, like Gecko) Chrome/18.0.1025.133 Mobile Safari/535.19");
+    } else 
+	request->user_agent = strdup(user_agent_override);
+
     if (!strncmp(url, "https://", 8)) {
         request->connection_ssl = true;
     } 
@@ -322,7 +336,8 @@ url_get(const char *url)
         char query[4096];
 
         snprintf(query, sizeof(query), "GET /%s HTTP/1.1\r\n"
-    	    "Host: %s\r\n\r\n", request->path, request->host);
+	    "User-Agent: %s\r\n"
+    	    "Host: %s\r\n\r\n", request->path, request->user_agent, request->host);
        
         Write(request, query, strlen(query)); 
 
@@ -357,6 +372,7 @@ url_finish(request_t *request)
         free(tmp->value);
         free(tmp);
     } 
+    if (request->user_agent) free(request->user_agent);
     free(request->data);
 }
 
@@ -375,6 +391,8 @@ main(int argc, char **argv)
     int i;
     
     if (argc != 3) usage();
+
+//    url_set_user_agent("Mozilla 5.0/");
 
     request_t *req = url_get(argv[1]);
     if (req->status != 200) {
