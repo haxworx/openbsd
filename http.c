@@ -388,10 +388,6 @@ main(int argc, char **argv)
         printf("%s -> %s\n", tmp->name, tmp->value);
     }
 
-    char *type = header_value(req, "Content-Type");
-
-    printf("Type: %s\n", type);
-   
     int fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
         fail("open()");
