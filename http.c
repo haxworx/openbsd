@@ -312,7 +312,7 @@ _http_headers_get(request_t *request)
 
         buf[len] = '\0';
 
-        if (strlen(buf) == 1) return (1);
+        if (strlen(buf) == 2) return (1);
 
         int count = sscanf(buf, "\nHTTP/1.1 %d", &request->status);
         if (count) continue;
@@ -389,7 +389,6 @@ url_get(request_t *request)
         Write(request, query, strlen(query)); 
 
         _http_headers_get(request);
-
         _http_content_get(request);
      
         return request->status;
@@ -485,7 +484,7 @@ main(int argc, char **argv)
     if (atoi(argv[3]) > 0) {
         req->print_percent = true;
     }
- 
+
     url_fd_write_set(req, fd);
 
     int status = url_get(req);
